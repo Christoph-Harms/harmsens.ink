@@ -6,16 +6,23 @@ authorTwitter = "the_harmstar" #do not include @
 cover = ""
 tags = ["tech", "hugo"]
 keywords = ["hugo", "github actions", "sftp", "deploy", "github"]
-description = "How to build and deploy a Hugo site via Github Actions"
+description = "How to build and deploy a Hugo site via Github Actions via SFTP on any server"
 showFullContent = false
 readingTime = true
 hideComments = false
 +++
 
 ## Introduction
+Recently, I wanted to automate the deployment of a Hugo website. And while there are many how-tos on the web to do exactly that, none of the ones I found fit my use case.
+
+The "classic" way seems to be to initiate a bare git repository on your server and utilize the `post-update` git hook to build and deploy your site. But I did not feel comfortable having the `origin` of my site's repo on my web server. Should it ever go down, I'd lose the repo. A way to prevent this would be to have two remotes to the repo, one on GitHub, the other one on the server. But then I always would have to push to two repositories on every update, and I wanted a "single source of truth".
+
+The other way is to build and deploy your Hugo site via Github Actions, but all of the how-tos I found about this were about deploying the site to GitHub Pages, which is also not what I wanted. I wanted the site to be built and then deployed to _my_ server via SFTP.
+
+It was not particularly complicated to figure this out, but I figured I'd post it as a how-to anyway. It also seems somewhat fitting for my first post on my new site to be about how this site is deployed. :) So here you go.
 
 ### SSH access for the GitHub Action
-For our Github Action to be able to upload the generated website to our webserver via SFTP, it needs SSH access to said server (duh!). There are basically two different ways to achieve this, one being to use a username and password, the other being to connect using an SSH key pair. There are [pros and cons](https://medium.com/head-in-the-clouds/passwords-vs-ssh-keys-whats-better-for-authentication-43b87e9f4862) for both of these methods, but I think that for machine-to-machine communication, using an SSH key pair is far more convenient and secure.
+For our Github Action to be able to upload the generated website to our web server via SFTP, it needs SSH access to said server (duh!). There are basically two different ways to achieve this, one being to use a username and password, the other being to connect using an SSH key pair. There are [pros and cons](https://medium.com/head-in-the-clouds/passwords-vs-ssh-keys-whats-better-for-authentication-43b87e9f4862) for both of these methods, but I think that for machine-to-machine communication, using an SSH key pair is far more convenient and secure.
 
 This means: we are going to need a key pair, where the public key is stored on our server, and the private key is accessible by our GitHub action.
 
@@ -66,3 +73,57 @@ Next, we need to make the private key accessible for our GitHub action that we a
 {{< image src="/img/navigate_to_secrets.png" alt="Screenshot of Github's settings" style="border-radius: 8px;" >}}
 
 As you see, I added three secrets: One for my server's IP, one for my username on my server, and one for the private key. You should do the same (granted, storing the server IP as a secret is not necessary for security reasons, since it is public anyway, but I prefer it like this because it seems more convenient for me to change it, should I ever move the website to another server).
+
+### The Action
+Only one thing left to do: create the actual action. In your repository, navigate to `Actions` --> `New workflow`, then click on  "set up a workflow yourself".
+
+{{< image src="/img/navigate_new_workflow.png" alt="Screenshot of Github's settings" style="border-radius: 8px;" >}}
+---
+{{< image src="/img/navigate_set_up_on_your_own.png" alt="Screenshot of Github's settings" style="border-radius: 8px;" >}}
+
+Delete the workflow boilerplate you are presented with and replace it by this.
+
+```yaml
+# This workflow will build the site and deploy it
+
+name: Build and deploy the site
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+
+  # Allows to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v2
+        with:
+          hugo-version: '0.101.0'
+          extended: true
+
+      - run: hugo --minify
+      
+      - name: Deploy
+        uses: Creepios/sftp-action@v1.0.3
+        with:
+          username: ${{ secrets.UBERSPACE_USERNAME }}
+          host: ${{ secrets.UBERSPACE_SERVER_IP }}
+          privateKey: ${{ secrets.SSH_PRIVATE_KEY }}
+          localPath: './public'
+          remotePath: '/path/to/html/dir/on/your/server'
+```
+
+Replace the `remotePath` with the actual path on your server and that's it! You're done. From now on, whenever you push something to the `main branch of your repository, the Hugo site will automatically be built and deployed.
